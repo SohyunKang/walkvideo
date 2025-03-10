@@ -1,40 +1,68 @@
+#%%
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1" 
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, random_split
 import torch.nn.functional as F
-from transformers import TimesformerModel
+from transformers import TimesformerModel, TimesformerConfig
 import matplotlib.pyplot as plt
 import seaborn as sns
 import umap.umap_ as umap
 import numpy as np
 import cv2
 import mediapipe as mp
-import os
 
 # MediaPipe Pose 모델 로드 (관절 좌표 추출)
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 
+
+# OpenMP 및 MKL 관련 환경 변수 설정 (CPU dispatcher 오류 방지)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+torch.set_num_threads(1)
+
 # GPU 정보 출력
 def get_device_info():
-    import os
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    torch.set_num_threads(1)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     if device.type == "cuda":
-        print(f"GPU Name: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
         print(f"CUDA Version: {torch.version.cuda}")
         print(f"PyTorch CUDA Available: {torch.cuda.is_available()}")
     return device
 
-# TimeSformer 기반 비디오 인코더 (비디오 특징 추출)
+# TimeSformer 기반 비디오 인코더 (비디오 특징 추출) pretrained
+# class VideoEncoder(nn.Module):
+#     def __init__(self, model_name="facebook/timesformer-base-finetuned-k400"):
+#         super(VideoEncoder, self).__init__()
+#         self.model = TimesformerModel.from_pretrained(model_name)
+
+#     def forward(self, video_frames):
+#         B, C, T, H, W = video_frames.shape
+#         video_frames = video_frames.permute(0, 2, 1, 3, 4)  # (B, C, T, H, W) → (B, T, C, H, W)
+#         return self.model(video_frames).last_hidden_state.mean(dim=1)  # 최종 특징 벡터 반환
+
 class VideoEncoder(nn.Module):
-    def __init__(self, model_name="facebook/timesformer-base-finetuned-k400"):
+    def __init__(self, num_frames=16, image_size=224, patch_size=32, num_classes=768):
         super(VideoEncoder, self).__init__()
-        self.model = TimesformerModel.from_pretrained(model_name)
+        config = TimesformerConfig(
+            image_size=image_size,
+            patch_size=patch_size,
+            num_frames=num_frames,
+            num_channels=3,
+            num_attention_heads=6,
+            hidden_size=768,
+            num_hidden_layers=6,
+            intermediate_size=3072,
+            attention_dropout=0.1,
+            hidden_dropout=0.1,
+            num_classes=num_classes
+        )
+        self.model = TimesformerModel(config)  # 사전학습 없이 초기화된 모델 사용
 
     def forward(self, video_frames):
         B, C, T, H, W = video_frames.shape
@@ -93,7 +121,7 @@ def contrastive_video_pose_loss(video_feat, pose_feat, temperature=0.5):
 
 
 # CLIP-style Contrastive Loss (Video-to-Pose & Pose-to-Video)
-def clip_style_contrastive_loss(video_feat, pose_feat, temperature=0.5):
+def clip_style_contrastive_loss(video_feat, pose_feat, temperature=0.1):
     batch_size = video_feat.shape[0]
 
     # 특징 정규화 (L2 정규화)
@@ -218,15 +246,20 @@ class VideoPoseDataset(Dataset):
             print("Error: 비디오에서 프레임을 읽을 수 없습니다.")
 
 
-# Feature Embedding 시각화 함수
 def visualize_embeddings(video_feats, pose_feats, epoch, phase):
     reducer = umap.UMAP(n_components=2)
+    
+    # ✅ 정규화 적용 (L2 Normalization)
+    video_feats = F.normalize(video_feats, dim=-1)
+    pose_feats = F.normalize(pose_feats, dim=-1)
+
+    # UMAP 변환
     combined_feats = torch.cat([video_feats.cpu().detach(), pose_feats.cpu().detach()], dim=0)
-    reduced_feats = reducer.fit_transform(combined_feats.clone().detach().cpu().numpy().astype(np.float32))
+    reduced_feats = reducer.fit_transform(combined_feats.numpy())
 
     labels = ["Video"] * video_feats.shape[0] + ["Pose"] * pose_feats.shape[0]
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(4, 3))
     sns.scatterplot(x=reduced_feats[:, 0], y=reduced_feats[:, 1], hue=labels, palette=["blue", "red"], alpha=0.7)
     plt.title(f"{phase} Feature Embeddings at Epoch {epoch}")
     plt.xlabel("UMAP Component 1")
@@ -239,7 +272,8 @@ if __name__ == "__main__":
     device = get_device_info()
     video_dir = "./GAIT_VIDEO_COMPLETE"
     dataset = VideoPoseDataset(video_dir)
-    dataset.visualize_video_frames(0)
+    for j in range(5):
+        dataset.visualize_video_frames(j)
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
@@ -248,7 +282,10 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
 
     ssl_model = SSLMultiModalModel().to(device)
-    optimizer = optim.Adam(ssl_model.parameters(), lr=1e-4)
+    optimizer = optim.Adam([
+    {'params': ssl_model.video_encoder.parameters(), 'lr': 1e-5},  # 비디오 인코더는 낮은 학습률
+    {'params': ssl_model.pose_encoder.parameters(), 'lr': 1e-4}   # 포즈 인코더는 기본 학습률
+])
     num_epochs = 50
     loss_function = clip_style_contrastive_loss
 
@@ -289,3 +326,5 @@ if __name__ == "__main__":
         visualize_embeddings(torch.cat(all_video_feats, dim=0), torch.cat(all_pose_feats, dim=0), epoch, "Validation")
 
     torch.save(ssl_model.state_dict(), "ssl_stage1_model.pth")
+
+# %%
