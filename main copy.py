@@ -215,11 +215,7 @@ class VideoPoseDataset(Dataset):
    
     # ... [existing methods] ...
     
-    def visualize_frames_and_keypoints_separately(self, idx, frame_size=(128, 128)):
-        """
-        Visualize video frames and keypoints separately,
-        with keypoints displayed on a black background.
-        """
+    def visualize_frames(self, idx, frame_size=(128, 128)):
         video_path = self.video_files[idx]
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -237,64 +233,28 @@ class VideoPoseDataset(Dataset):
                 break
             frame = cv2.resize(frame, frame_size)
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            keypoints = self.extract_keypoints(frame_rgb)
-            
-            if keypoints is not None:
-                valid_frames[idx] = (frame_rgb, keypoints)
-            frames.append((idx, frame_rgb, keypoints))
-        
-        # Handle missing keypoints by finding closest valid frame
-        for i, (idx, frame_rgb, keypoints) in enumerate(frames):
-            if keypoints is None:
-                closest_idx = min(valid_frames.keys(), key=lambda x: abs(x - idx)) if valid_frames else None
-                if closest_idx is not None:
-                    frames[i] = (idx, frame_rgb, valid_frames[closest_idx][1])
+             
+            valid_frames[idx] = (frame_rgb)
+            frames.append((idx, frame_rgb))
         
         cap.release()
 
         selected_frames = [frame for _, frame, _ in frames]
-        selected_keypoints = [keypoints for _, _, keypoints in frames]
-
-        # Create black background images for keypoints
-        keypoint_images = []
-        for keypoints in selected_keypoints:
-            black_bg = np.zeros((frame_size[0], frame_size[1], 3), dtype=np.uint8)
-            if keypoints is not None:
-                for kp in keypoints:
-                    x, y = int(kp[0] * frame_size[1]), int(kp[1] * frame_size[0])
-                    if 0 <= x < frame_size[1] and 0 <= y < frame_size[0]:
-                        cv2.circle(black_bg, (x, y), 4, (0, 255, 0), -1)
-            keypoint_images.append(black_bg)
-
-        if selected_frames and keypoint_images:
-            # Concatenate original frames
-            concatenated_frames = np.hstack(selected_frames)
+       
+        
+        concatenated_frames = np.hstack(selected_frames)
             
-            # Concatenate keypoint images
-            concatenated_keypoints = np.hstack(keypoint_images)
-            
-            # Create a figure with two subplots
-            plt.figure(figsize=(14, 6))
-            
-            # Display frames in the first subplot
-            plt.subplot(2, 1, 1)
-            plt.imshow(concatenated_frames)
-            plt.axis("off")
-            plt.title("Original Video Frames")
-            
-            # Display keypoints in the second subplot
-            plt.subplot(2, 1, 2)
-            plt.imshow(concatenated_keypoints)
-            plt.axis("off")
-            plt.title("Keypoints on Black Background")
-            
-            plt.tight_layout()
-            plt.show()
-        else:
-            print("Error: Unable to read frames from the video.")
-
-
-   
+        # Create a figure with two subplots
+        plt.figure(figsize=(14, 6))
+        
+        # Display frames in the first subplot
+        
+        plt.imshow(concatenated_frames)
+        plt.axis("off")
+        plt.title("Original Video Frames")
+        
+        plt.tight_layout()
+        plt.show()   
 
 # 학습 루프
 if __name__ == "__main__":
@@ -302,7 +262,7 @@ if __name__ == "__main__":
     video_dir = "./GAIT_VIDEO_COMPLETE"
     dataset = VideoPoseDataset(video_dir)
     for j in range(5):
-        dataset.visualize_frames_and_keypoints_separately(j)
+        dataset.visualize_frames(j)
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
