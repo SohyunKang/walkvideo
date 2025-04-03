@@ -1,0 +1,51 @@
+{
+  "experiment_name": "",
+  "tensor_dir": "./processed_tensor",
+  "save_dir": {
+    "results": "./results",
+    "checkpoints": "./checkpoints"
+  },
+
+  "model": {
+    "num_frames": 60,
+    "image_size": 224,
+    "patch_size": 32,
+    "hidden_dim": 768,
+    "projection_dim": 128,
+    "pretrained": true,
+    "freeze_pretrained": true
+  },
+
+  "training": {
+    "batch_size": 8,
+    "epochs": 50,
+    "temperature": 0.07,
+    "loss_type": "improved_contrastive",
+    "max_grad_norm": 1.0
+  },
+
+  "optimizer": {
+    "encoder_lr": 0.0001,
+    "proj_lr": 0.001,
+    "weight_decay": 0.0001
+  },
+
+  "scheduler": {
+    "type": "CosineAnnealingLR",
+    "eta_min": 1e-6
+  },
+
+  "umap": {
+    "n_neighbors": 15,
+    "min_dist": 0.1,
+    "metric": "cosine"
+  },
+
+  "visualization": {
+    "gif_sample_idx": 0,
+    "gif_fps": 5,
+    "visualize_every_n_epochs": 1
+  },
+
+  "device": "cuda"
+}

@@ -31,6 +31,7 @@ torch.set_num_threads(1)
 # GPU 정보 출력
 def get_device_info():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device('cpu')
     print(f"Using device: {device}")
     if device.type == "cuda":
         print(f"GPU Name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
@@ -38,9 +39,8 @@ def get_device_info():
         print(f"PyTorch CUDA Available: {torch.cuda.is_available()}")
     return device
 
-# 변경: 사전 학습된 TimeSformer 사용
 class VideoEncoder(nn.Module):
-    def __init__(self, num_frames=16, image_size=224, patch_size=32, hidden_dim=768, pretrained=True):
+    def __init__(self, num_frames=16, image_size=224, patch_size=32, hidden_dim=768, pretrained=True, freeze_pretrained=True):
         super(VideoEncoder, self).__init__()
         self.num_frames = num_frames
         self.image_size = image_size
@@ -49,26 +49,29 @@ class VideoEncoder(nn.Module):
         
         if pretrained:
             try:
-                # 사전 학습된 모델 로드 시도
                 print("Loading pretrained TimeSformer model...")
                 self.model = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k400")
                 print("Pretrained model loaded successfully!")
+
+                if freeze_pretrained:
+                    for param in self.model.parameters():
+                        param.requires_grad = False
+                    print("Pretrained model parameters are frozen.")
             except:
                 print("Failed to load pretrained model, using custom configuration instead.")
                 self._init_custom_model()
         else:
             self._init_custom_model()
-            
+
     def _init_custom_model(self):
-        # 사전 학습된 모델을 사용하지 않을 경우 커스텀 구성 사용
         config = TimesformerConfig(
             image_size=self.image_size,
-            patch_size=self.patch_size,  # 더 작은 패치 사이즈로 조정
+            patch_size=self.patch_size,
             num_frames=self.num_frames,
             num_channels=3,
-            num_attention_heads=12,  # 헤드 수 증가
+            num_attention_heads=12,
             hidden_size=self.hidden_dim,
-            num_hidden_layers=12,  # 레이어 수 증가
+            num_hidden_layers=12,
             intermediate_size=3072,
             attention_dropout=0.1,
             hidden_dropout=0.1,
@@ -80,21 +83,20 @@ class VideoEncoder(nn.Module):
         B, C, T, H, W = video_frames.shape
         video_frames = video_frames.permute(0, 2, 1, 3, 4)  # (B, T, C, H, W)
         output = self.model(video_frames)
-        video_feature = output.last_hidden_state[:, 0, :]  # [CLS] 토큰 사용 (첫 번째 토큰)
-        
+        video_feature = output.last_hidden_state.mean(dim=1)  # 모든 토큰 평균 사용
         return video_feature
 
-# 비디오-포즈 정렬을 위한 Self-Supervised Learning 모델
+
 class Videomodel(nn.Module):
     def __init__(self, projection_dim=256):
         super(Videomodel, self).__init__()
-        self.video_encoder = VideoEncoder(pretrained=True)  # 사전 학습된 인코더 사용
+        self.video_encoder = VideoEncoder(pretrained=True, freeze_pretrained=True)  # 사전 학습된 인코더 사용
         
         # 특징 투영 레이어 추가 (projection head)
         self.projection = nn.Sequential(
-            nn.Linear(768, 512),  # TimeSformer의 hidden_dim이 일반적으로 768
-            nn.ReLU(),
-            nn.Linear(512, projection_dim),
+            nn.Linear(768, projection_dim),  # TimeSformer의 hidden_dim이 일반적으로 768
+            # nn.ReLU(),
+            # nn.Linear(512, projection_dim),
         )
         
     def forward(self, video_frames):
@@ -133,6 +135,52 @@ def visualize_embeddings(video_feats, labels, epoch, phase, save_path=None):
     """
     Args:
         video_feats: (N, D) Tensor
+        labels: (N,) Tensor with integer labels (0~4)
+        epoch: int
+        phase: str ("Train" or "Validation")
+        save_path: str or None
+    """
+
+    # 숫자 라벨 → 문자 라벨로 매핑
+    label_map = {
+        0: 'COGNITIVE DISORDER',
+        1: 'STROKE',
+        2: 'PARKINSONISM',
+        3: 'HC',
+        4: 'OTHERS'
+    }
+    label_order = ['COGNITIVE DISORDER', 'STROKE', 'PARKINSONISM', 'HC', 'OTHERS']
+    labels_str = [label_map[int(i)] for i in labels.cpu().numpy()]
+
+    # UMAP 2D 임베딩
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=42)
+    embedding_2d = reducer.fit_transform(video_feats.cpu().numpy())
+
+    # 시각화
+    plt.figure(figsize=(5, 4))
+    sns.scatterplot(
+        x=embedding_2d[:, 0],
+        y=embedding_2d[:, 1],
+        hue=labels_str,
+        hue_order=label_order,
+        palette='tab10',
+        s=100,
+        alpha=0.7,
+        legend="full"
+    )
+    plt.title(f"UMAP Visualization - {phase} Epoch {epoch + 1}")
+    plt.legend(title="Label", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(f"{save_path}/{phase}_epoch_{epoch+1}.png")
+
+    plt.show()
+    plt.close()
+
+    """
+    Args:
+        video_feats: (N, D) Tensor
         labels: (N,) Tensor
         epoch: int
         phase: str ("Train" or "Validation")
@@ -143,7 +191,7 @@ def visualize_embeddings(video_feats, labels, epoch, phase, save_path=None):
     embedding_2d = reducer.fit_transform(video_feats.numpy())
 
     # 플롯 그리기
-    plt.figure(figsize=(10, 8))
+    plt.figure(figsize=(5, 4))
     scatter = sns.scatterplot(
         x=embedding_2d[:, 0],
         y=embedding_2d[:, 1],
@@ -157,55 +205,36 @@ def visualize_embeddings(video_feats, labels, epoch, phase, save_path=None):
     plt.legend(title="Label", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     
+    
     if save_path:
         plt.savefig(f"{save_path}/{phase}_epoch_{epoch+1}.png")
-    
+
+    plt.show()
     plt.close()
 
-# 수정된 대조 손실 함수
 def improved_contrastive_loss(features, labels, temperature=0.07):
-    """
-    개선된 대조 손실 함수
-    
-    Args:
-        features: 정규화된 특징 벡터 (B, D)
-        labels: 레이블 (B,)
-        temperature: 유사도 스케일링 파라미터
-    """
+    device = features.device
     batch_size = features.shape[0]
     
-    # 특징 정규화 (L2 normalization)
     features = F.normalize(features, dim=1)
-    
-    # 유사도 행렬 계산 (코사인 유사도)
     similarity_matrix = torch.matmul(features, features.T) / temperature
-    
-    # Mask 생성
-    labels = labels.view(-1, 1)
-    mask = torch.eq(labels, labels.T).float()
-    
-    # 대각선(자기 자신) 제외
-    identity_mask = torch.eye(batch_size, device=features.device)
-    mask = mask - identity_mask
-    
-    # exp(sim) 계산을 위한 마스크
-    exp_mask = (1 - identity_mask)
-    
-    # 유사도 행렬에서 로그-소프트맥스 계산
-    exp_sim = torch.exp(similarity_matrix) * exp_mask
+
+    labels = labels.contiguous().view(-1, 1)
+    mask = torch.eq(labels, labels.T).float().to(device)
+
+    # 자기 자신 제외
+    logits_mask = torch.ones_like(mask) - torch.eye(batch_size, device=device)
+    mask = mask * logits_mask
+
+    exp_sim = torch.exp(similarity_matrix) * logits_mask
     log_prob = similarity_matrix - torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-12)
-    
-    # 각 샘플당 포지티브 샘플 수 계산
-    num_positives = mask.sum(dim=1)
-    
-    # Positive 샘플이 있는 경우에만 대조 손실 계산
-    loss = 0
-    for i in range(batch_size):
-        if num_positives[i] > 0:
-            loss -= (log_prob[i] * mask[i]).sum() / num_positives[i]
-    
-    # 배치의 평균 손실 반환
-    return loss / batch_size
+
+    # positive만 남겨서 평균 loss 계산
+    mean_log_prob_pos = (mask * log_prob).sum(dim=1) / (mask.sum(dim=1) + 1e-12)
+
+    loss = -mean_log_prob_pos.mean()
+    return loss
+
 
 def visualize_video_as_gif(dataset, sample_idx=0, save_path="video.gif", fps=5):
     video, label = dataset[sample_idx]  # video shape: [C, T, H, W]
@@ -253,8 +282,8 @@ if __name__ == "__main__":
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
     # 배치 크기 증가 (메모리 허용 범위 내에서)
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, pin_memory=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, pin_memory=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, pin_memory=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, pin_memory=True, num_workers=4)
     
     device = get_device_info()
     
@@ -263,7 +292,7 @@ if __name__ == "__main__":
     
     # 옵티마이저 설정 - 다른 학습률 적용
     optimizer = optim.AdamW([
-        {'params': ssl_model.video_encoder.parameters(), 'lr': 5e-5},  # 인코더는 더 낮은 학습률
+        {'params': ssl_model.video_encoder.parameters(), 'lr': 1e-4},  # 인코더는 더 낮은 학습률
         {'params': ssl_model.projection.parameters(), 'lr': 1e-3}      # 투영 레이어는 더 높은 학습률
     ], weight_decay=1e-4)
     
@@ -281,6 +310,7 @@ if __name__ == "__main__":
     
     for epoch in range(num_epochs):
         # 훈련 단계
+        print('train start')
         ssl_model.train()
         total_loss = 0
         all_video_feats, all_labels = [], []
