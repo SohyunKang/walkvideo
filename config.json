@@ -1,26 +1,28 @@
-{
+ {
   "experiment_name": "",
-  "tensor_dir": "./processed_tensor",
+  "tensor_dir": "./preprocessing/processed_tensor_seg_224_16",
   "save_dir": {
     "results": "./results",
     "checkpoints": "./checkpoints"
   },
-
+  "label_type": "1_PACE",
+  "label_type_eg": ["1_PACE",	"1_RHYTHM",	"1_SPATIAL_VAR",	"1_TEMPORAL_VAR",	"1_BASE_WIDTH",	"1_SS_TIME",	"1_DS_TIME",	"1_DS_PERCENT"],
+  "label_type_eg2": ["GAIT_DISTURBANCE", "DX_CATEGORY"],
   "model": {
-    "num_frames": 60,
+    "num_frames": 16,
     "image_size": 224,
     "patch_size": 32,
     "hidden_dim": 768,
-    "projection_dim": 128,
+    "projection_dim": 512,
     "pretrained": true,
-    "freeze_pretrained": true
+    "freeze_pretrained": false,
+    "encoder": "facebook/timesformer-base-finetuned-ssv2"
   },
 
   "training": {
-    "batch_size": 8,
+    "batch_size": 16,
     "epochs": 50,
     "temperature": 0.07,
-    "loss_type": "improved_contrastive",
     "max_grad_norm": 1.0
   },
 
