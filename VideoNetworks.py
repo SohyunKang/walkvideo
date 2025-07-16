@@ -1,5 +1,5 @@
 from torch import nn
-from transformers import TimesformerModel, TimesformerConfig, VideoMAEImageProcessor, AutoModel, AutoConfig
+from transformers import TimesformerModel, TimesformerForVideoClassification, TimesformerConfig, VideoMAEImageProcessor, AutoModel, AutoConfig
 from peft import get_peft_model, LoraConfig, TaskType, PeftModel
 from torch import nn
 import torch
@@ -17,19 +17,30 @@ class VideoEncoder(nn.Module):
         if pretrained:
             print("Loading pretrained TimeSformer model...")
             base_model = TimesformerModel.from_pretrained(encoder)
+            # base_model = TimesformerForVideoClassification.from_pretrained(encoder)
+            print(base_model)
             # base_model = AutoModel.from_pretrained('OpenGVLab/VideoMAEv2-Base',trust_remote_code=True)
             # self.processor = VideoMAEImageProcessor.from_pretrained("OpenGVLab/VideoMAEv2-Base")
             print("Pretrained model loaded successfully!")
 
             if freeze_pretrained == True:
-                for param in base_model.parameters():
+                for name, param in base_model.named_parameters():
                     param.requires_grad = False
+    
                 print("Pretrained model parameters are frozen.")
+            
 
             elif freeze_pretrained == False:
                 for param in base_model.parameters():
                     param.requires_grad = True
                 print("Pretrained model parameters will be learned.")
+
+            
+            elif freeze_pretrained == "Falsewithclassifier":
+                for name, param in base_model.named_parameters():
+                    param.requires_grad = False
+    
+                print("Pretrained model parameters are frozen.")
 
             elif freeze_pretrained == "partial":
                 for name, param in base_model.named_parameters():
@@ -92,6 +103,8 @@ class VideoEncoder(nn.Module):
         video_frames = video_frames.permute(0, 2, 1, 3, 4)  # (B, T, C, H, W)
         output = self.model(video_frames)
         return output.last_hidden_state.mean(dim=1)  # (B, hidden_dim)
+
+        # return output
 
         # # (B, C, T, H, W) → (B, T, H, W, C)
         # video_frames = video_frames.permute(0, 2, 3, 4, 1)

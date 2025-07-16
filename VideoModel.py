@@ -6,13 +6,13 @@ class VideoModel(nn.Module):
     def __init__(self, model_config):
         super(VideoModel, self).__init__()
         self.video_encoder = VideoEncoder(**model_config)
-        self.projection = nn.Linear(model_config['hidden_dim'], model_config['projection_dim'])
-        # self.projection_mlp = nn.Sequential(
-        #             nn.Linear(model_config['hidden_dim'], model_config['hidden_dim']),
-        #             nn.LayerNorm(model_config['hidden_dim']),
-        #             nn.GELU(),
-        #             nn.Linear(model_config['hidden_dim'], model_config['projection_dim'])
-        #         )
+        # self.projection = nn.Linear(model_config['hidden_dim'], model_config['projection_dim'])
+        self.projection = nn.Sequential(
+                    nn.Linear(model_config['hidden_dim'], model_config['hidden_dim']),
+                    # nn.LayerNorm(model_config['hidden_dim']),
+                    nn.ReLU(),
+                    nn.Linear(model_config['hidden_dim'], model_config['projection_dim'])
+                )
 
     def forward(self, video_frames):
         video_feats = self.video_encoder(video_frames)

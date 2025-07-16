@@ -17,6 +17,35 @@ def improved_contrastive_loss(features, labels, temperature):
     mean_log_prob_pos = (mask * log_prob).sum(dim=1) / (mask.sum(dim=1) + 1e-12)
     return -mean_log_prob_pos.mean()
 
+def improved_multilabel_contrastive_loss(features, labels, temperature, threshold=0.5):
+    device = features.device
+    features = F.normalize(features, dim=1)  # (N, D)
+
+    # Similarity between features
+    similarity_matrix = torch.matmul(features, features.T) / temperature  # (N, N)
+
+    # Cosine similarity between multi-labels
+    labels = labels.float()
+    label_sim = F.normalize(labels, p=2, dim=1)  # (N, C)
+    cosine_sim = torch.matmul(label_sim, label_sim.T)  # (N, N), range [-1, 1] ideally in [0, 1]
+
+    # Convert soft similarity to binary mask using threshold
+    positive_mask = (cosine_sim > threshold).float().to(device)
+
+    # Remove self-comparison
+    logits_mask = torch.ones_like(positive_mask) - torch.eye(features.size(0), device=device)
+    positive_mask = positive_mask * logits_mask
+
+    # Compute log-softmax denominator
+    exp_sim = torch.exp(similarity_matrix) * logits_mask  # (N, N)
+    log_prob = similarity_matrix - torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-12)
+
+    # Compute mean log-likelihood for positives
+    mean_log_prob_pos = (positive_mask * log_prob).sum(dim=1) / (positive_mask.sum(dim=1) + 1e-12)
+
+    # Final loss
+    return -mean_log_prob_pos.mean()
+
 def hierarchical_contrastive_loss(features, labels, temperature=0.07, alpha=1.0, beta=1.0):
     device = features.device
     features = F.normalize(features, dim=1)
